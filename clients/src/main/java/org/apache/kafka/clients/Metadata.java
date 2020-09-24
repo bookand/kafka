@@ -201,6 +201,7 @@ public final class Metadata {
         this.lastSuccessfulRefreshMs = now;
         this.version += 1;
 
+        //为true时，删除过期的topic元数据
         if (topicExpiryEnabled) {
             // Handle expiry of topics from the metadata refresh set.
             for (Iterator<Map.Entry<String, Long>> it = topics.entrySet().iterator(); it.hasNext(); ) {

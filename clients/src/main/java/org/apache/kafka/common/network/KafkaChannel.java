@@ -132,6 +132,7 @@ public class KafkaChannel {
             receive = new NetworkReceive(maxReceiveSize, id);
         }
 
+
         receive(receive);
         if (receive.complete()) {
             receive.payload().rewind();
@@ -151,12 +152,15 @@ public class KafkaChannel {
     }
 
     private long receive(NetworkReceive receive) throws IOException {
+        //读取数据
         return receive.readFrom(transportLayer);
     }
 
     private boolean send(Send send) throws IOException {
+        //发送数据
         send.writeTo(transportLayer);
         if (send.completed())
+            //移除OP_WRITE事件
             transportLayer.removeInterestOps(SelectionKey.OP_WRITE);
 
         return send.completed();

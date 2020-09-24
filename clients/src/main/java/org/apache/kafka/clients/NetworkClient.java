@@ -240,6 +240,7 @@ public class NetworkClient implements KafkaClient {
 
     private void doSend(ClientRequest request, long now) {
         request.setSendTimeMs(now);
+        //保存发送但未接受到响应的请求
         this.inFlightRequests.add(request);
         selector.send(request.request());
     }
@@ -255,8 +256,10 @@ public class NetworkClient implements KafkaClient {
      */
     @Override
     public List<ClientResponse> poll(long timeout, long now) {
+        //封装获取元数据的请求
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
+            //发送请求
             this.selector.poll(Utils.min(timeout, metadataTimeout, requestTimeoutMs));
         } catch (IOException e) {
             log.error("Unexpected error during I/O", e);
@@ -444,8 +447,10 @@ public class NetworkClient implements KafkaClient {
      */
     private void handleCompletedReceives(List<ClientResponse> responses, long now) {
         for (NetworkReceive receive : this.selector.completedReceives()) {
+            // source = kafkaChannel id
             String source = receive.source();
             ClientRequest req = inFlightRequests.completeNext(source);
+            //解析请求
             Struct body = parseResponse(receive.payload(), req.request().header());
             if (!metadataUpdater.maybeHandleCompletedReceive(req, now, body))
                 responses.add(new ClientResponse(req, now, false, body));
@@ -495,6 +500,7 @@ public class NetworkClient implements KafkaClient {
         try {
             log.debug("Initiating connection to node {} at {}:{}.", node.id(), node.host(), node.port());
             this.connectionStates.connecting(nodeConnectionId, now);
+            //创建连接
             selector.connect(nodeConnectionId,
                              new InetSocketAddress(node.host(), node.port()),
                              this.socketSendBuffer,
@@ -592,7 +598,9 @@ public class NetworkClient implements KafkaClient {
 
         private void handleResponse(RequestHeader header, Struct body, long now) {
             this.metadataFetchInProgress = false;
+            //解析响应的数据，封装成MetadataResponse
             MetadataResponse response = new MetadataResponse(body);
+            //获取服务端返回的元数据
             Cluster cluster = response.cluster();
             // check if any topics metadata failed to get updated
             Map<String, Errors> errors = response.errors();
@@ -602,6 +610,7 @@ public class NetworkClient implements KafkaClient {
             // don't update the cluster if there are no valid nodes...the topic we want may still be in the process of being
             // created which means we will get errors and no nodes until it exists
             if (cluster.nodes().size() > 0) {
+                //如果获取到元数据，就更新元数据
                 this.metadata.update(cluster, now);
             } else {
                 log.trace("Ignoring empty metadata response with correlation id {}.", header.correlationId());
@@ -629,12 +638,14 @@ public class NetworkClient implements KafkaClient {
             }
             String nodeConnectionId = node.idString();
 
+            //判断是否可以发送请求
             if (canSendRequest(nodeConnectionId)) {
                 this.metadataFetchInProgress = true;
                 MetadataRequest metadataRequest;
                 if (metadata.needMetadataForAllTopics())
                     metadataRequest = MetadataRequest.allTopics();
                 else
+                    //获取对应的topic的元数据
                     metadataRequest = new MetadataRequest(new ArrayList<>(metadata.topics()));
                 ClientRequest clientRequest = request(now, nodeConnectionId, metadataRequest);
                 log.debug("Sending metadata request {} to node {}", metadataRequest, node.id());

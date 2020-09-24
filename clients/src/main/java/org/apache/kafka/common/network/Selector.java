@@ -171,9 +171,21 @@ public class Selector implements Selectable {
             socket.setSendBufferSize(sendBufferSize);
         if (receiveBufferSize != Selectable.USE_DEFAULT_BUFFER_SIZE)
             socket.setReceiveBufferSize(receiveBufferSize);
+
+        //这个的默认值是false，代表要开启Nagle的算法
+        //它会把网络中的一些小的数据包收集起来，组合成一个大的数据包
+        //然后再发送出去。因为它认为如果网络中有大量的小的数据包在传输
+        //其实是会影响网络拥塞。
+
+        //kafka一定不能把这儿设置为false，因为我们有些时候可能有些数据包就是比较
+        //小，他这儿就不帮我们发送了，显然是不合理的。
         socket.setTcpNoDelay(true);
         boolean connected;
         try {
+            //尝试去服务器去连接。
+            //因为这儿非阻塞的
+            //有可能就立马连接成功，如果成功了就返回true
+            //也有可能需要很久才能连接成功，返回false。
             connected = socketChannel.connect(address);
         } catch (UnresolvedAddressException e) {
             socketChannel.close();
@@ -182,15 +194,28 @@ public class Selector implements Selectable {
             socketChannel.close();
             throw e;
         }
+        //SocketChannel往Selector上注册了一个OP_CONNECT
         SelectionKey key = socketChannel.register(nioSelector, SelectionKey.OP_CONNECT);
+        //根据根据SocketChannel 封装出来一个KafkaChannel
         KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize);
+        //把key和KafkaChannel关联起来
+        //后面使用起来会比较方便
+        //我们可以根据key就找到KafkaChannel
+        //也可以根据KafkaChannel找到key
         key.attach(channel);
+        //缓存起来了
         this.channels.put(id, channel);
+        //所以正常情况下，这儿网络不能完成连接。
+        //如果这儿不能完成连接。大家猜一下
+        //kafka会在哪儿完成网络最后的连接呢？
 
+
+        //如果里面就连接上了
         if (connected) {
             // OP_CONNECT won't trigger for immediately connected channels
             log.debug("Immediately connected to node {}", channel.id());
             immediatelyConnectedKeys.add(key);
+            // 取消前面注册 OP_CONNECT 事件。
             key.interestOps(0);
         }
     }
@@ -237,8 +262,10 @@ public class Selector implements Selectable {
      * @param send The request to send
      */
     public void send(Send send) {
+        //获取到一个kafkaChanel
         KafkaChannel channel = channelOrFail(send.destination());
         try {
+            //绑定OP_WRITE事件
             channel.setSend(send);
         } catch (CancelledKeyException e) {
             this.failedSends.add(send.destination());
@@ -283,15 +310,17 @@ public class Selector implements Selectable {
 
         /* check ready keys */
         long startSelect = time.nanoseconds();
+        //获取注册的key的数量
         int readyKeys = select(timeout);
         long endSelect = time.nanoseconds();
         this.sensors.selectTime.record(endSelect - startSelect, time.milliseconds());
 
         if (readyKeys > 0 || !immediatelyConnectedKeys.isEmpty()) {
+            //执行注册的事件
             pollSelectionKeys(this.nioSelector.selectedKeys(), false, endSelect);
             pollSelectionKeys(immediatelyConnectedKeys, true, endSelect);
         }
-
+        // 对stagedReceives里面的数据要进行处理
         addToCompletedReceives();
 
         long endIo = time.nanoseconds();
@@ -309,6 +338,7 @@ public class Selector implements Selectable {
         while (iterator.hasNext()) {
             SelectionKey key = iterator.next();
             iterator.remove();
+            // 根据key找到对应的 KafkaChannel
             KafkaChannel channel = channel(key);
 
             // register all per-connection metrics at once
@@ -320,7 +350,9 @@ public class Selector implements Selectable {
 
                 /* complete any connections that have finished their handshake (either normally or immediately) */
                 if (isImmediatelyConnected || key.isConnectable()) {
+                    //完成网络连接
                     if (channel.finishConnect()) {
+                        //把完成连接的chanel信息保存起来
                         this.connected.add(channel.id());
                         this.sensors.connectionCreated.record();
                         SocketChannel socketChannel = (SocketChannel) key.channel();
@@ -340,12 +372,14 @@ public class Selector implements Selectable {
                 /* if channel is ready read from any connections that have readable data */
                 if (channel.ready() && key.isReadable() && !hasStagedReceive(channel)) {
                     NetworkReceive networkReceive;
+                    //读取数据
                     while ((networkReceive = channel.read()) != null)
                         addToStagedReceives(channel, networkReceive);
                 }
 
                 /* if channel is ready write to any sockets that have space in their buffer and for which we have data */
                 if (channel.ready() && key.isWritable()) {
+                    //发送数据
                     Send send = channel.write();
                     if (send != null) {
                         this.completedSends.add(send);
@@ -577,6 +611,7 @@ public class Selector implements Selectable {
                 if (!channel.isMute()) {
                     Deque<NetworkReceive> deque = entry.getValue();
                     NetworkReceive networkReceive = deque.poll();
+                    //将响应数据存储到completedReceives里
                     this.completedReceives.add(networkReceive);
                     this.sensors.recordBytesReceived(channel.id(), networkReceive.payload().limit());
                     if (deque.isEmpty())

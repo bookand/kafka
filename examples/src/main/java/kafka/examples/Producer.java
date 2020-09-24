@@ -35,6 +35,7 @@ public class Producer extends Thread {
         props.put("client.id", "DemoProducer");
         props.put("key.serializer", "org.apache.kafka.common.serialization.IntegerSerializer");
         props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+        //创建kafkaProducer
         producer = new KafkaProducer<>(props);
         this.topic = topic;
         this.isAsync = isAsync;
@@ -45,6 +46,7 @@ public class Producer extends Thread {
         while (true) {
             String messageStr = "Message_" + messageNo;
             long startTime = System.currentTimeMillis();
+            //异步发送
             if (isAsync) { // Send asynchronously
                 producer.send(new ProducerRecord<>(topic,
                     messageNo,
